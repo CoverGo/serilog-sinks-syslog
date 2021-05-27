@@ -17,6 +17,11 @@ namespace Serilog.Sinks.Syslog
         public string Host { get; set; }
 
         /// <summary>
+        /// Whether or not to check the IPAddress of Host
+        /// </summary>
+        public bool CheckHostIPAddress { get; set; }
+
+        /// <summary>
         /// TCP port the syslog server is listening on. Defaults to 1468, which is typically the
         /// default for non-TLS enabled syslog servers
         /// </summary>
@@ -47,6 +52,12 @@ namespace Serilog.Sinks.Syslog
         public bool KeepAlive { get; set; } = false;
 
         /// <summary>
+        /// Whether or not to use dual mode (ipv4 + ipv6) for the TCP client
+        /// If true, TCP client will use ipv4 only
+        /// </summary>
+        public bool DisableDualMode { get; set; }
+
+        /// <summary>
         /// Secure protocols to support. If None, the sink will connect to the server over an unsecure
         /// channel. Note that the server must support TLS in order to connect using a secure channel
         /// </summary>
@@ -71,6 +82,8 @@ namespace Serilog.Sinks.Syslog
         /// can be customized by using the <see cref="CertValidationCallback"/> handler.
         /// </summary>
         public bool CheckCertificateRevocation { get; set; } = false;
+
+        public bool AcceptAllCertifications { get; set; } = false;
 
         /// <summary>
         /// A timeout value for the TCP connection to perform the TLS handshake with the server. This is

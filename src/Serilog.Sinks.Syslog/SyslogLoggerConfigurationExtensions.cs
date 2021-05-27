@@ -12,6 +12,7 @@ using System.Runtime.InteropServices;
 using System.Security.Authentication;
 using Serilog.Configuration;
 using Serilog.Events;
+using Serilog.Formatting;
 using Serilog.Formatting.Display;
 using Serilog.Sinks.PeriodicBatching;
 using Serilog.Sinks.Syslog;
@@ -45,20 +46,21 @@ namespace Serilog
         /// <param name="appName">The name of the application. Defaults to the current process name</param>
         /// <param name="facility">The category of the application</param>
         /// <param name="outputTemplate">A message template describing the output messages</param>
+        /// <param name="formatter">An ITextFormatter formatting the output messages</param>
         /// <param name="restrictedToMinimumLevel">The minimum level for events passed through the sink</param>
         /// <seealso cref="!:https://github.com/serilog/serilog/wiki/Formatting-Output"/>
         public static LoggerConfiguration LocalSyslog(this LoggerSinkConfiguration loggerSinkConfig,
             string appName = null, Facility facility = Facility.Local0, string outputTemplate = null,
-            LogEventLevel restrictedToMinimumLevel = LevelAlias.Minimum)
+            ITextFormatter formatter = null, LogEventLevel restrictedToMinimumLevel = LevelAlias.Minimum)
         {
             if (!RuntimeInformation.IsOSPlatform(OSPlatform.Linux))
                 throw new ArgumentException("The local syslog sink is only supported on Linux systems");
 
-            var formatter = GetFormatter(SyslogFormat.Local, appName, facility, outputTemplate);
+            var syslogFormatter = GetFormatter(SyslogFormat.Local, appName, facility, outputTemplate, formatter);
             var syslogService = new LocalSyslogService(facility, appName);
             syslogService.Open();
 
-            var sink = new SyslogLocalSink(formatter, syslogService);
+            var sink = new SyslogLocalSink(syslogFormatter, syslogService);
 
             return loggerSinkConfig.Sink(sink, restrictedToMinimumLevel);
         }
@@ -74,23 +76,24 @@ namespace Serilog
         /// <param name="facility">The category of the application</param>
         /// <param name="batchConfig">Batching configuration</param>
         /// <param name="outputTemplate">A message template describing the output messages</param>
+        /// <param name="formatter">An ITextFormatter formatting the output messages</param>
         /// <param name="restrictedToMinimumLevel">The minimum level for events passed through the sink</param>
         /// <param name="messageIdPropertyName">Where the Id number of the message will be derived from. Only applicable when <paramref name="format"/> is <see cref="SyslogFormat.RFC5424"/>. Defaults to the "SourceContext" property of the syslog event. Property name and value must be all printable ASCII characters with max length of 32.</param>
         /// <see cref="!:https://github.com/serilog/serilog/wiki/Formatting-Output"/>
         public static LoggerConfiguration UdpSyslog(this LoggerSinkConfiguration loggerSinkConfig,
             string host, int port = 514, string appName = null, SyslogFormat format = SyslogFormat.RFC3164,
             Facility facility = Facility.Local0, PeriodicBatchingSinkOptions batchConfig = null, string outputTemplate = null,
-            LogEventLevel restrictedToMinimumLevel = LevelAlias.Minimum,
+            ITextFormatter formatter = null, LogEventLevel restrictedToMinimumLevel = LevelAlias.Minimum,
             string messageIdPropertyName = Rfc5424Formatter.DefaultMessageIdPropertyName)
         {
             if (String.IsNullOrWhiteSpace(host))
                 throw new ArgumentException(nameof(host));
 
             batchConfig ??= DefaultBatchOptions;
-            var formatter = GetFormatter(format, appName, facility, outputTemplate, messageIdPropertyName);
+            var syslogFormatter = GetFormatter(format, appName, facility, outputTemplate, formatter, messageIdPropertyName);
             var endpoint = ResolveIP(host, port);
 
-            var syslogUdpSink = new SyslogUdpSink(endpoint, formatter);
+            var syslogUdpSink = new SyslogUdpSink(endpoint, syslogFormatter);
             var sink = new PeriodicBatchingSink(syslogUdpSink, batchConfig);
 
             return loggerSinkConfig.Sink(sink, restrictedToMinimumLevel);
@@ -123,10 +126,12 @@ namespace Serilog
         /// </summary>
         /// <param name="loggerSinkConfig">The logger configuration</param>
         /// <param name="host">Hostname of the syslog server</param>
+        /// <param name="checkHostIPAddress">Whether or not to check the IP Addresses of "host" from DNS record</param>
         /// <param name="port">Port the syslog server is listening on</param>
         /// <param name="appName">The name of the application. Must be all printable ASCII characters. Max length 32 (for RFC3164) or 48 (for RFC5424). Defaults to the current process name</param>
         /// <param name="framingType">How to frame/delimit syslog messages for the wire</param>
         /// <param name="format">The syslog message format to be used</param>
+        /// <param name="disableDualMode">Whether or not to disble dual mode of TCP client. Will use IPV4 only if true</param>
         /// <param name="facility">The category of the application</param>
         /// <param name="secureProtocols">
         /// SSL/TLS protocols to be used for a secure channel. Set to None for an unsecured connection
@@ -137,28 +142,31 @@ namespace Serilog
         /// will be used
         /// </param>
         /// <param name="outputTemplate">A message template describing the output messages</param>
+        /// <param name="formatter">An ITextFormatter formatting the output messages</param>
         /// <param name="restrictedToMinimumLevel">The minimum level for events passed through the sink</param>
         /// <param name="messageIdPropertyName">Where the Id number of the message will be derived from. Only applicable when <paramref name="format"/> is <see cref="SyslogFormat.RFC5424"/>. Defaults to the "SourceContext" property of the syslog event. Property name and value must be all printable ASCII characters with max length of 32.</param>
         /// <param name="batchConfig">Configuration for the Periodic Batching Sink, type of PeriodicBatchingSinkOptions. Has the fields batchSizeLimit (Integer, defaults to 1000), batchPeriod (TimeSpan, defaults to 2 seconds) and batchQueueLimit (Nullable<int>, defaults to 100.000</param>
         /// <seealso cref="!:https://github.com/serilog/serilog/wiki/Formatting-Output"/>
         public static LoggerConfiguration TcpSyslog(this LoggerSinkConfiguration loggerSinkConfig,
-            string host, int port = 1468, string appName = null, FramingType framingType = FramingType.OCTET_COUNTING,
-            SyslogFormat format = SyslogFormat.RFC5424, Facility facility = Facility.Local0,
+            string host, int port = 1468, bool checkHostIPAddress = true, string appName = null, FramingType framingType = FramingType.OCTET_COUNTING,
+            SyslogFormat format = SyslogFormat.RFC5424, bool disableDualMode = false, Facility facility = Facility.Local0,
             SslProtocols secureProtocols = SslProtocols.Tls12, ICertificateProvider certProvider = null,
             RemoteCertificateValidationCallback certValidationCallback = null,
-            string outputTemplate = null,
+            string outputTemplate = null, ITextFormatter formatter = null,
             LogEventLevel restrictedToMinimumLevel = LevelAlias.Minimum,
             string messageIdPropertyName = Rfc5424Formatter.DefaultMessageIdPropertyName,
             PeriodicBatchingSinkOptions batchConfig = null)
         {
-            var formatter = GetFormatter(format, appName, facility, outputTemplate, messageIdPropertyName);
+            var syslogFormatter = GetFormatter(format, appName, facility, outputTemplate, formatter, messageIdPropertyName);
 
             var config = new SyslogTcpConfig
             {
                 Host = host,
                 Port = port,
-                Formatter = formatter,
+                CheckCertificateRevocation = checkHostIPAddress,
+                Formatter = syslogFormatter,
                 Framer = new MessageFramer(framingType),
+                DisableDualMode = disableDualMode,
                 SecureProtocols = secureProtocols,
                 CertProvider = certProvider,
                 CertValidationCallback = certValidationCallback
@@ -170,7 +178,7 @@ namespace Serilog
         }
 
         private static ISyslogFormatter GetFormatter(SyslogFormat format, string appName, Facility facility,
-            string outputTemplate,
+            string outputTemplate, ITextFormatter formatter,
             string messageIdPropertyName = null)
         {
             var templateFormatter = String.IsNullOrWhiteSpace(outputTemplate)
@@ -179,9 +187,9 @@ namespace Serilog
 
             return format switch
             {
-                SyslogFormat.RFC3164 => new Rfc3164Formatter(facility, appName, templateFormatter),
-                SyslogFormat.RFC5424 => new Rfc5424Formatter(facility, appName, templateFormatter, messageIdPropertyName),
-                SyslogFormat.Local => new LocalFormatter(facility, templateFormatter),
+                SyslogFormat.RFC3164 => new Rfc3164Formatter(facility, appName, templateFormatter, formatter),
+                SyslogFormat.RFC5424 => new Rfc5424Formatter(facility, appName, templateFormatter, formatter, messageIdPropertyName),
+                SyslogFormat.Local => new LocalFormatter(facility, templateFormatter, formatter),
                 _ => throw new ArgumentException($"Invalid format: {format}")
             };
         }
